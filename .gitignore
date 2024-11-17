@@ -6,8 +6,8 @@ venv/
 .venv/
 env/
 .env/
-myevn/
-.myvenv/
+myenv/
+.myenv/
 
 # Ignore Python bytecode files
 __pycache__/
