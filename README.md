@@ -1,14 +1,17 @@
 # Multilingual Document Anonymizer and Deanonymizer
 
-This project processes documents in **English** and **Italian**, anonymizes sensitive information, encrypts the anonymized data, and provides a way to securely reconstruct the original content using user-specific keys. It supports `.pdf`, `.docx`, and `.txt` files.
+This project processes documents in **English** and **Italian**, anonymizes sensitive information using customizable NER models, encrypts the anonymized data, and provides a way to securely reconstruct the original content using user-specific keys. It supports `.pdf`, `.docx`, and `.txt` files.
 
 ---
 
 ## Features
 
 1. **Anonymization**:
-   - Replaces sensitive entities (e.g., `PERSON`, `ORG`, `DATE`) with placeholders.
-   - Entities to anonymize are configurable in a `entities.txt` file.
+   - Two anonymizers are available:
+     - **Default Anonymizer**: Uses spaCy for Named Entity Recognition (NER).
+     - **GLiNER Anonymizer**: Uses the GLiNER library for advanced and flexible NER.
+   - Replace sensitive entities (e.g., `Person`, `Date`) with placeholders.
+   - Supports configurable entities for each anonymizer using separate configuration files.
 
 2. **Encryption**:
    - Uses **Hybrid Encryption**:
@@ -34,28 +37,22 @@ This project processes documents in **English** and **Italian**, anonymizes sens
 
 ```
 .
-├── input/               # Input folder for files to be processed
-│   ├── file1.pdf
-│   ├── file2.docx
-│   └── file3.txt
-├── output/              # Folder containing processed anonymized files
-│   ├── file1_processed.json
-│   ├── file2_processed.json
-│   └── file3_processed.json
-├── reconstructed/       # Folder containing reconstructed original files
-│   ├── file1_reconstructed.txt
-│   ├── file2_reconstructed.txt
-│   └── file3_reconstructed.txt
-├── public_keys/         # Folder containing public keys for encryption
+├── input/                 # Input folder for files to be processed
+│   ├── example.txt
+├── output/                # Output folder for anonymized files
+│   ├── example_processed.json
+├── reconstructed/         # Folder containing reconstructed original files
+│   ├── example_reconstructed.txt
+├── public_keys/           # Folder containing public keys for encryption
 │   ├── user1_public_key.pem
 │   ├── user2_public_key.pem
-│   └── ...
-├── entities.txt         # Configurable file for entity types to anonymize
-├── private_key.pem      # Example private key for a user
-├── anonymizer.py        # Main anonymizer script
-├── deanonymizer.py      # Deanonymizer script
-├── requirements.txt     # Python dependencies
-└── README.md            # Project documentation
+├── entities.txt           # Entity configuration for default anonymizer
+├── gliner_entities.txt    # Entity configuration for GLiNER anonymizer
+├── anonymizer.py          # Default anonymizer script (spaCy)
+├── gliner_anonymizer.py   # GLiNER-based anonymizer script
+├── deanonymizer.py        # Deanonymizer script
+├── requirements.txt       # Python dependencies
+└── README.md              # Project documentation
 ```
 
 ---
@@ -79,7 +76,12 @@ This project processes documents in **English** and **Italian**, anonymizes sens
    python -m spacy download it_core_news_sm
    ```
 
-4. **Set Up Keys**:
+4. **Install GLiNER**:
+   ```bash
+   pip install gliner
+   ```
+
+5. **Set Up Keys**:
    - Place your public keys in the `public_keys` folder.
    - Ensure each user has a private key that corresponds to a public key.
 
@@ -87,17 +89,16 @@ This project processes documents in **English** and **Italian**, anonymizes sens
 
 ## Usage
 
-### Anonymizer
+### Default Anonymizer
 
 1. **Prepare Input**:
-   - Place your `.pdf`, `.docx`, and `.txt` files in the `input` folder.
-   - Configure entity types to anonymize in the `entities.txt` file. Example:
+   - Place `.pdf`, `.docx`, and `.txt` files in the `input` folder.
+   - Configure entities in `entities.txt`. Example:
      ```
      PERSON
      ORG
-     GPE
      DATE
-     LOC
+     GPE
      ```
 
 2. **Run the Anonymizer**:
@@ -107,6 +108,30 @@ This project processes documents in **English** and **Italian**, anonymizes sens
 
 3. **Output**:
    - Anonymized files with encrypted mappings are saved in the `output` folder as `.json`.
+
+---
+
+### GLiNER Anonymizer
+
+1. **Prepare Input**:
+   - Place `.txt` files in the `input` folder (GLiNER currently supports text files).
+   - Configure entities in `gliner_entities.txt`. Example:
+     ```
+     Person
+     Date
+     Organization
+     Location
+     ```
+
+2. **Run the GLiNER Anonymizer**:
+   ```bash
+   python3 gliner_anonymizer.py
+   ```
+
+3. **Output**:
+   - Anonymized files with encrypted mappings are saved in the `output` folder as `.json`.
+
+---
 
 ### Deanonymizer
 
@@ -132,7 +157,7 @@ Each file in the `output` folder is a JSON file with:
 Example:
 ```json
 {
-    "anonymized_text": "John works at {{ORG_0}}.",
+    "anonymized_text": "{{Person_0}} works at {{Organization_0}}.",
     "encrypted_mapping": {
         "encrypted_aes_keys": {
             "user1_public_key": "BASE64_ENCRYPTED_AES_KEY_FOR_USER1",
@@ -144,14 +169,11 @@ Example:
 }
 ```
 
-### Reconstructed Folder (`reconstructed`):
-Each file in the `reconstructed` folder is a plain `.txt` file containing the original reconstructed text.
-
 ---
 
 ## How It Works
 
-### Anonymizer Workflow
+### Default Anonymizer Workflow (spaCy)
 1. Extracts text from `.pdf`, `.docx`, or `.txt` files in the `input` folder.
 2. Detects the language of the text (English or Italian).
 3. Loads entity types from `entities.txt`.
@@ -160,6 +182,15 @@ Each file in the `reconstructed` folder is a plain `.txt` file containing the or
    - AES encryption for the mapping data.
    - RSA encryption for the AES key, for each public key in the `public_keys` folder.
 6. Saves the anonymized text and encrypted mapping to the `output` folder.
+
+### GLiNER Anonymizer Workflow
+1. Reads text files (`.txt`) from the `input` folder.
+2. Uses GLiNER to identify entities specified in `gliner_entities.txt`.
+3. Replaces identified entities with placeholders.
+4. Encrypts the mapping of placeholders to original entities using:
+   - AES encryption for the mapping data.
+   - RSA encryption for the AES key, for each public key in the `public_keys` folder.
+5. Saves the anonymized text and encrypted mapping to the `output` folder.
 
 ### Deanonymizer Workflow
 1. Reads JSON files from the `output` folder.
@@ -179,9 +210,18 @@ Each file in the `reconstructed` folder is a plain `.txt` file containing the or
 
 ## Notes
 
-- Ensure `entities.txt` contains valid spaCy entity types (e.g., `PERSON`, `ORG`).
-- Only `.pdf`, `.docx`, and `.txt` files are supported.
-- Use consistent folder names (`input`, `output`, `reconstructed`) for seamless processing.
-
+- **Entity Files**:
+  - Use `entities.txt` for the default anonymizer (spaCy).
+  - Use `gliner_entities.txt` for the GLiNER anonymizer.
+- **File Formats**:
+  - The default anonymizer supports `.pdf`, `.docx`, and `.txt` files.
+  - The GLiNER anonymizer supports `.txt` files only.
 - Use consistent folder names (`input`, `output`, `reconstructed`, `public_keys`) for seamless processing.
 - Ensure your private key matches one of the public keys in the `public_keys` folder.
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.
+```

@@ -48,8 +48,10 @@ def hybrid_decrypt(encrypted_package, private_key, user_id):
     if user_id not in encrypted_package["encrypted_aes_keys"]:
         raise ValueError(f"No encrypted AES key found for user ID: {user_id}")
 
-    # Decrypt AES key with the user's private key
+    # Decode Base64-encoded AES key
     encrypted_aes_key = base64.b64decode(encrypted_package["encrypted_aes_keys"][user_id])
+
+    # Decrypt AES key with the user's private key
     aes_key = private_key.decrypt(
         encrypted_aes_key,
         padding.OAEP(
@@ -59,14 +61,17 @@ def hybrid_decrypt(encrypted_package, private_key, user_id):
         ),
     )
 
-    # Decrypt the data
+    # Decode Base64-encoded IV and encrypted data
     iv = base64.b64decode(encrypted_package["iv"])
     encrypted_data = base64.b64decode(encrypted_package["encrypted_data"])
+
+    # Decrypt the data with AES
     cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv))
     decryptor = cipher.decryptor()
     decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
 
     return json.loads(decrypted_data.decode())
+
 
 
 # Reconstruct Original Text
