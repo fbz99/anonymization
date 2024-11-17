@@ -154,6 +154,3 @@ Each file in the `reconstructed` folder is a plain `.txt` file containing the or
 - Ensure `entities.txt` contains valid spaCy entity types (e.g., `PERSON`, `ORG`).
 - Only `.pdf`, `.docx`, and `.txt` files are supported.
 - Use consistent folder names (`input`, `output`, `reconstructed`) for seamless processing.
-
-
-```
