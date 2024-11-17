@@ -15,71 +15,109 @@ from langdetect import detect, DetectorFactory
 DetectorFactory.seed = 0
 
 
-# RSA Key Management
-def generate_keys():
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=4096,
-    )
-    public_key = private_key.public_key()
-
-    with open("private_key.pem", "wb") as private_file:
-        private_file.write(
-            private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
-        )
-
-    with open("public_key.pem", "wb") as public_file:
-        public_file.write(
-            public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo,
-            )
-        )
-    print("RSA key pair generated and saved.")
-
-
-def load_keys():
-    with open("private_key.pem", "rb") as private_file:
-        private_key = serialization.load_pem_private_key(
-            private_file.read(),
-            password=None,
-        )
-
-    with open("public_key.pem", "rb") as public_file:
-        public_key = serialization.load_pem_public_key(public_file.read())
-
-    return private_key, public_key
-
-
 # Hybrid Encryption Functions
-def hybrid_encrypt(data, public_key):
+def hybrid_encrypt(data, public_keys_folder):
+    """
+    Encrypt data using hybrid AES + RSA encryption for all public keys in the folder.
+    """
     aes_key = urandom(32)  # 256-bit AES key
     iv = urandom(16)  # Initialization vector for AES
     cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv))
     encryptor = cipher.encryptor()
     encrypted_data = encryptor.update(data.encode()) + encryptor.finalize()
 
-    encrypted_aes_key = public_key.encrypt(
-        aes_key,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None,
-        ),
-    )
+    encrypted_aes_keys = {}
+
+    # Encrypt AES key with all available public keys
+    for public_key_file in Path(public_keys_folder).rglob("*.pem"):
+        with open(public_key_file, "rb") as file:
+            public_key = serialization.load_pem_public_key(file.read())
+            encrypted_aes_key = public_key.encrypt(
+                aes_key,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+            encrypted_aes_keys[public_key_file.stem] = base64.b64encode(encrypted_aes_key).decode()
 
     return {
-        "encrypted_aes_key": base64.b64encode(encrypted_aes_key).decode(),
+        "encrypted_aes_keys": encrypted_aes_keys,
         "iv": base64.b64encode(iv).decode(),
         "encrypted_data": base64.b64encode(encrypted_data).decode(),
     }
 
 
-# Text Extraction Functions
+# NER and Placeholder Management
+def anonymize_text(text, nlp, entities_to_anonymize):
+    doc = nlp(text)
+    entities = []
+    anonymized_text = text
+
+    for i, ent in enumerate(doc.ents):
+        if ent.label_ in entities_to_anonymize:
+            placeholder = f"{{{{{ent.label_}_{i}}}}}"
+            entities.append((placeholder, ent.text))
+            anonymized_text = anonymized_text.replace(ent.text, placeholder)
+
+    return anonymized_text, entities
+
+
+def process_files(input_folder, output_folder, public_keys_folder, entity_file):
+    """
+    Process files in the input folder, anonymize, and encrypt using public keys.
+    """
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Load entity types to anonymize
+    with open(entity_file, "r", encoding="utf-8") as file:
+        entities_to_anonymize = [line.strip() for line in file if line.strip()]
+    print(f"Loaded entities: {entities_to_anonymize}")
+
+    for file_path in Path(input_folder).rglob("*"):
+        file_path = str(file_path)
+        if not file_path.endswith((".pdf", ".docx", ".txt")):
+            continue
+
+        try:
+            # Extract text
+            text = get_text_from_file(file_path)
+            print(f"Processing {file_path}...")
+
+            # Detect language
+            lang = detect_language(text)
+            if lang == "en":
+                nlp = spacy.load("en_core_web_sm")
+            elif lang == "it":
+                nlp = spacy.load("it_core_news_sm")
+            else:
+                print(f"Skipping {file_path}: Unsupported language detected.")
+                continue
+
+            # Anonymize text
+            anonymized_text, entity_mapping = anonymize_text(text, nlp, entities_to_anonymize)
+
+            # Encrypt entity mapping for all public keys
+            encrypted_mapping = hybrid_encrypt(json.dumps(entity_mapping, ensure_ascii=False), public_keys_folder)
+
+            # Save the results to the output folder
+            base_filename = Path(file_path).stem
+            output_file = Path(output_folder) / f"{base_filename}_processed.json"
+            with open(output_file, "w", encoding="utf-8") as file:
+                json.dump(
+                    {"anonymized_text": anonymized_text, "encrypted_mapping": encrypted_mapping},
+                    file,
+                    indent=4,
+                    ensure_ascii=False,
+                )
+
+            print(f"Processed {file_path} saved to {output_file}.")
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+
+
+# Helper Functions
 def extract_text_from_pdf(file_path):
     reader = PdfReader(file_path)
     text = ""
@@ -109,7 +147,6 @@ def get_text_from_file(file_path):
         raise ValueError(f"Unsupported file type for {file_path}. Supported types: .pdf, .docx, .txt")
 
 
-# Language Detection
 def detect_language(text):
     try:
         lang = detect(text)
@@ -124,89 +161,12 @@ def detect_language(text):
         return None
 
 
-# Load Entities from Configuration File
-def load_entities(entity_file):
-    """
-    Load entity types from a configuration file.
-    Each line in the file represents an entity type (e.g., PERSON, ORG).
-    """
-    if not os.path.exists(entity_file):
-        raise FileNotFoundError(f"Entity file '{entity_file}' not found.")
-    with open(entity_file, "r", encoding="utf-8") as file:
-        entities = [line.strip() for line in file.readlines() if line.strip()]
-    print(f"Loaded entities: {entities}")
-    return entities
-
-
-# NER and Placeholder Management
-def anonymize_text(text, nlp, entities_to_anonymize):
-    doc = nlp(text)
-    entities = []
-    anonymized_text = text
-
-    for i, ent in enumerate(doc.ents):
-        if ent.label_ in entities_to_anonymize:
-            placeholder = f"{{{{{ent.label_}_{i}}}}}"
-            entities.append((placeholder, ent.text))
-            anonymized_text = anonymized_text.replace(ent.text, placeholder)
-
-    return anonymized_text, entities
-
-
-def process_files(input_folder, output_folder, entity_file):
-    os.makedirs(output_folder, exist_ok=True)
-    private_key, public_key = load_keys()
-
-    # Load entity types to anonymize
-    entities_to_anonymize = load_entities(entity_file)
-
-    for file_path in Path(input_folder).rglob("*"):
-        file_path = str(file_path)
-        if not file_path.endswith((".pdf", ".docx", ".txt")):
-            continue
-
-        try:
-            # Extract text
-            text = get_text_from_file(file_path)
-            print(f"Processing {file_path}...")
-
-            # Detect language
-            lang = detect_language(text)
-            if lang == "en":
-                nlp = spacy.load("en_core_web_sm")
-            elif lang == "it":
-                nlp = spacy.load("it_core_news_sm")
-            else:
-                print(f"Skipping {file_path}: Unsupported language detected.")
-                continue
-
-            # Anonymize text
-            anonymized_text, entity_mapping = anonymize_text(text, nlp, entities_to_anonymize)
-
-            # Encrypt entity mapping
-            encrypted_mapping = hybrid_encrypt(json.dumps(entity_mapping, ensure_ascii=False), public_key)
-
-            # Save the results to the output folder
-            base_filename = Path(file_path).stem
-            output_file = Path(output_folder) / f"{base_filename}_processed.json"
-            with open(output_file, "w", encoding="utf-8") as file:
-                json.dump(
-                    {"anonymized_text": anonymized_text, "encrypted_mapping": encrypted_mapping},
-                    file,
-                    indent=4,
-                    ensure_ascii=False,
-                )
-
-            print(f"Processed {file_path} saved to {output_file}.")
-        except Exception as e:
-            print(f"Error processing {file_path}: {e}")
-
-
 if __name__ == "__main__":
     # Static folders
     input_folder = "input"
     output_folder = "output"
-    entity_file = "entities.txt"  # File listing entities to anonymize
+    public_keys_folder = "public_keys"
+    entity_file = "entities.txt"
 
     # Process files
-    process_files(input_folder, output_folder, entity_file)
+    process_files(input_folder, output_folder, public_keys_folder, entity_file)
