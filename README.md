@@ -8,8 +8,8 @@ This project processes documents in **English** and **Italian**, anonymizes sens
 
 1. **Anonymization**:
    - Two anonymizers are available:
-     - **Default Anonymizer**: Uses spaCy for Named Entity Recognition (NER).
-     - **GLiNER Anonymizer**: Uses the GLiNER library for advanced and flexible NER.
+     - **Default Anonymizer**: Uses [spaCy](https://spacy.io) for Named Entity Recognition (NER).
+     - **GLiNER Anonymizer**: Uses the [GLiNER](https://github.com/urchade/GLiNER) library for advanced and flexible NER.
    - Replace sensitive entities (e.g., `Person`, `Date`) with placeholders.
    - Supports configurable entities for each anonymizer using separate configuration files.
 
@@ -201,6 +201,13 @@ Example:
 
 ---
 
+## References
+
+- **spaCy**: [https://spacy.io](https://spacy.io)
+- **GLiNER**: [https://github.com/urchade/GLiNER](https://github.com/urchade/GLiNER)
+
+---
+
 ## Requirements
 
 - Python 3.7 or higher
@@ -225,3 +232,5 @@ Example:
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
 ```
+
+This version includes references to [spaCy](https://spacy.io) and [GLiNER](https://github.com/urchade/GLiNER) to credit the tools used in the anonymizers.
