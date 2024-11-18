@@ -1,6 +1,6 @@
-spacy==3.6.0
-PyPDF2==3.0.1
-python-docx==0.8.11
-langdetect==1.0.9
-cryptography==41.0.3
+spacy
+PyPDF2
+python-docx
+langdetect
+cryptography
 gliner

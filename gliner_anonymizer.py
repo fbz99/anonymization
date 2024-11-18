@@ -1,16 +1,53 @@
 import json
 import os
 import base64
+import argparse
 from pathlib import Path
+from PyPDF2 import PdfReader
 from gliner import GLiNER
-from langdetect import detect, DetectorFactory
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from os import urandom
 
-# Ensure consistent language detection results
-DetectorFactory.seed = 0
+
+# RSA Key Generation
+def generate_keys():
+    """
+    Generate RSA private and public keys, save them, and move the public key to the public_keys folder.
+    """
+    if os.path.exists("private_key.pem") and os.path.exists("public_keys/public_key.pem"):
+        print("Keys already exist. Skipping key generation.")
+        return
+
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=4096,
+    )
+    public_key = private_key.public_key()
+
+    # Save private key
+    with open("private_key.pem", "wb") as private_file:
+        private_file.write(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+
+    # Save public key
+    public_key_path = Path("public_keys")
+    public_key_path.mkdir(exist_ok=True)  # Create public_keys folder if it doesn't exist
+    with open(public_key_path / "public_key.pem", "wb") as public_file:
+        public_file.write(
+            public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        )
+
+    print("Keys generated successfully! Private key: 'private_key.pem', Public key: 'public_keys/public_key.pem'.")
 
 
 # Hybrid Encryption Functions
@@ -47,15 +84,18 @@ def hybrid_encrypt(data, public_keys_folder):
     }
 
 
-
 # GLiNER Model Initialization
-model = GLiNER.from_pretrained("urchade/gliner_mediumv2.1")
+model = GLiNER.from_pretrained("gliner-community/gliner_medium-v2.5")
 
 
 def anonymize_text(text, labels):
     """
     Anonymize text using GLiNER for entity recognition.
+    Truncates text to `max_length` tokens if necessary.
     """
+
+
+    # Perform entity recognition
     entities = model.predict_entities(text, labels, threshold=0.5)
     entity_mapping = []
     anonymized_text = text
@@ -68,6 +108,23 @@ def anonymize_text(text, labels):
     return anonymized_text, entity_mapping
 
 
+# Extract text from PDF
+def extract_text_from_pdf(pdf_path):
+    """
+    Extract text from a PDF file using PyPDF2.
+    """
+    try:
+        reader = PdfReader(pdf_path)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
+        return text
+    except Exception as e:
+        print(f"Error reading PDF file {pdf_path}: {e}")
+        return None
+
+
+# Process Files
 def process_files(input_folder, output_folder, public_keys_folder, entity_file):
     """
     Process files in the input folder, anonymize using GLiNER, and encrypt using public keys.
@@ -79,17 +136,23 @@ def process_files(input_folder, output_folder, public_keys_folder, entity_file):
         labels = [line.strip() for line in file if line.strip()]
     print(f"Loaded entity labels: {labels}")
 
-    for file_path in Path(input_folder).rglob("*.txt"):
+    for file_path in Path(input_folder).rglob("*"):
         try:
-            with open(file_path, "r", encoding="utf-8") as file:
-                text = file.read()
+            if file_path.suffix.lower() == ".pdf":
+                # Extract text from PDF
+                print(f"Processing PDF file {file_path}...")
+                text = extract_text_from_pdf(file_path)
+            elif file_path.suffix.lower() == ".txt":
+                # Read text from TXT file
+                print(f"Processing TXT file {file_path}...")
+                with open(file_path, "r", encoding="utf-8") as file:
+                    text = file.read()
+            else:
+                print(f"Skipping unsupported file type: {file_path}")
+                continue
 
-            print(f"Processing {file_path}...")
-
-            # Detect language (optional, assumes GLiNER is language-agnostic)
-            lang = detect(text)
-            if lang not in ["en", "it"]:
-                print(f"Skipping {file_path}: Unsupported language detected.")
+            if not text:
+                print(f"Failed to extract text from {file_path}. Skipping...")
                 continue
 
             # Anonymize text
@@ -115,11 +178,23 @@ def process_files(input_folder, output_folder, public_keys_folder, entity_file):
 
 
 if __name__ == "__main__":
-    # Static folder paths
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Anonymize and encrypt text files and PDFs using GLiNER.")
+    parser.add_argument(
+        "--keygen",
+        action="store_true",
+        help="Generate a new RSA key pair (private_key.pem and public_keys/public_key.pem) and then process files.",
+    )
+    args = parser.parse_args()
+
+    # Static folders
     input_folder = "input"
     output_folder = "output"
     public_keys_folder = "public_keys"
     entity_file = "gliner_entities.txt"
+
+    if args.keygen:
+        generate_keys()
 
     # Process files
     process_files(input_folder, output_folder, public_keys_folder, entity_file)
