@@ -1,7 +1,3 @@
-Here’s a comprehensive `README.md` for your project in its current state.
-
----
-
 # Anonymizer and Deanonymizer
 
 This project provides a system for anonymizing text from various input file formats (PDFs, TXT files), securely storing entity mappings, and deanonymizing reworked text returned by a Large Language Model (LLM). The anonymizer processes input files and generates anonymized outputs and encrypted entity mappings, while the deanonymizer reconstructs the original text using mappings for the corresponding LLM responses.
@@ -125,7 +121,3 @@ python3 deanonymizer.py
 ## License
 
 This project is licensed under the MIT License.
-
----
-
-Let me know if you'd like additional sections or changes!
