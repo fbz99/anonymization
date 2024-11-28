@@ -4,10 +4,37 @@ import base64
 import argparse
 from pathlib import Path
 from PyPDF2 import PdfReader
+import spacy
+from langdetect import detect
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from os import urandom
+
+
+# Load SpaCy Models for Supported Languages
+def load_spacy_models():
+    """
+    Load SpaCy models for supported languages.
+    """
+    models = {
+        "en": spacy.load("en_core_web_sm"),
+        "it": spacy.load("it_core_news_sm")
+    }
+    return models
+
+
+# Detect Language
+def detect_language(text):
+    """
+    Detect the language of the given text using langdetect.
+    Returns the detected language code.
+    """
+    try:
+        return detect(text)
+    except Exception as e:
+        print(f"Error detecting language: {e}")
+        return None
 
 
 # RSA Key Generation
@@ -99,17 +126,30 @@ def extract_text_from_pdf(pdf_path):
         return None
 
 
-# Process Files
-def process_files(input_folder, output_folder, public_keys_folder, entity_file):
+# Anonymization Logic with SpaCy
+def anonymize_text(text, nlp):
     """
-    Process files in the input folder, anonymize text, and encrypt using public keys.
+    Anonymize text using SpaCy's named entity recognition (NER).
+    Returns anonymized text and entity mapping.
+    """
+    doc = nlp(text)
+    entity_mapping = []
+    anonymized_text = text
+
+    for ent in doc.ents:
+        placeholder = f"{{{{{ent.label_}_{len(entity_mapping)}}}}}"
+        anonymized_text = anonymized_text.replace(ent.text, placeholder)
+        entity_mapping.append((placeholder, ent.text))
+
+    return anonymized_text, entity_mapping
+
+
+# Process Files
+def process_files(input_folder, output_folder, public_keys_folder, spacy_models):
+    """
+    Process files in the input folder, anonymize text in multiple languages, and encrypt using public keys.
     """
     os.makedirs(output_folder, exist_ok=True)
-
-    # Load entity types to anonymize
-    with open(entity_file, "r", encoding="utf-8") as file:
-        entities_to_anonymize = [line.strip() for line in file if line.strip()]
-    print(f"Loaded entities: {entities_to_anonymize}")
 
     for file_path in Path(input_folder).rglob("*"):
         try:
@@ -130,9 +170,17 @@ def process_files(input_folder, output_folder, public_keys_folder, entity_file):
                 print(f"Failed to extract text from {file_path}. Skipping...")
                 continue
 
-            # Placeholder for anonymization logic (replace with actual implementation)
-            anonymized_text = text
-            entity_mapping = []  # Placeholder for entity mappings
+            # Detect language
+            language_code = detect_language(text)
+            if not language_code or language_code not in spacy_models:
+                print(f"Unsupported language for file {file_path}. Skipping...")
+                continue
+
+            print(f"Detected language: {language_code}")
+
+            # Anonymize text
+            nlp = spacy_models[language_code]
+            anonymized_text, entity_mapping = anonymize_text(text, nlp)
 
             # Encrypt entity mapping for all public keys
             encrypted_mapping = hybrid_encrypt(json.dumps(entity_mapping, ensure_ascii=False), public_keys_folder)
@@ -155,7 +203,7 @@ def process_files(input_folder, output_folder, public_keys_folder, entity_file):
 
 if __name__ == "__main__":
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Anonymize and encrypt text files and PDFs.")
+    parser = argparse.ArgumentParser(description="Anonymize and encrypt text files and PDFs for multiple languages.")
     parser.add_argument(
         "--keygen",
         action="store_true",
@@ -167,10 +215,12 @@ if __name__ == "__main__":
     input_folder = "input"
     output_folder = "output"
     public_keys_folder = "public_keys"
-    entity_file = "entities.txt"
 
     if args.keygen:
         generate_keys()
 
+    # Load SpaCy models for supported languages
+    spacy_models = load_spacy_models()
+
     # Process files
-    process_files(input_folder, output_folder, public_keys_folder, entity_file)
+    process_files(input_folder, output_folder, public_keys_folder, spacy_models)
