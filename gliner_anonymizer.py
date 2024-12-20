@@ -3,12 +3,37 @@ import os
 import base64
 import argparse
 from pathlib import Path
+from tqdm import tqdm  # For progress bar
 from PyPDF2 import PdfReader
 from gliner import GLiNER
+from langdetect import detect
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from os import urandom
+
+
+# Load GLiNER Models for Supported Languages
+def load_gliner_models():
+    """
+    Load GLiNER models for supported languages.
+    """
+    return {
+        "en": GLiNER.from_pretrained("gliner-community/gliner_medium-v2.5"),
+        "it": GLiNER.from_pretrained("DeepMount00/GLiNER_ITA_LARGE")
+    }
+
+
+# Detect Language
+def detect_language(text):
+    """
+    Detect the language of the given text using langdetect.
+    """
+    try:
+        return detect(text)
+    except Exception as e:
+        print(f"Error detecting language: {e}")
+        return None
 
 
 # RSA Key Generation
@@ -84,18 +109,17 @@ def hybrid_encrypt(data, public_keys_folder):
     }
 
 
-# GLiNER Model Initialization
-model = GLiNER.from_pretrained("gliner-community/gliner_medium-v2.5")
+def count_tokens(text):
+    """
+    Count the number of tokens in a given text.
+    """
+    return len(text.split())
 
 
-def anonymize_text(text, labels):
+def anonymize_text(text, model, labels):
     """
     Anonymize text using GLiNER for entity recognition.
-    Truncates text to `max_length` tokens if necessary.
     """
-
-
-    # Perform entity recognition
     entities = model.predict_entities(text, labels, threshold=0.5)
     entity_mapping = []
     anonymized_text = text
@@ -125,26 +149,26 @@ def extract_text_from_pdf(pdf_path):
 
 
 # Process Files
-def process_files(input_folder, output_folder, public_keys_folder, entity_file):
+def process_files(input_folder, output_folder, public_keys_folder, entity_file, gliner_models):
     """
     Process files in the input folder, anonymize using GLiNER, and encrypt using public keys.
     """
     os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(readable_folder, exist_ok=True)
 
     # Load entity types to recognize
     with open(entity_file, "r", encoding="utf-8") as file:
         labels = [line.strip() for line in file if line.strip()]
     print(f"Loaded entity labels: {labels}")
 
-    for file_path in Path(input_folder).rglob("*"):
+    files = list(Path(input_folder).rglob("*"))
+    for file_path in tqdm(files, desc="Processing files"):
         try:
             if file_path.suffix.lower() == ".pdf":
                 # Extract text from PDF
-                print(f"Processing PDF file {file_path}...")
                 text = extract_text_from_pdf(file_path)
             elif file_path.suffix.lower() == ".txt":
                 # Read text from TXT file
-                print(f"Processing TXT file {file_path}...")
                 with open(file_path, "r", encoding="utf-8") as file:
                     text = file.read()
             else:
@@ -155,24 +179,57 @@ def process_files(input_folder, output_folder, public_keys_folder, entity_file):
                 print(f"Failed to extract text from {file_path}. Skipping...")
                 continue
 
+            # Detect language
+            language_code = detect_language(text)
+            if language_code not in gliner_models:
+                print(f"Unsupported language detected for {file_path}: {language_code}. Skipping...")
+                continue
+
+            print(f"Detected language for {file_path}: {language_code.upper()}")
+
+            # Select model based on language
+            model = gliner_models[language_code]
+
+            # Count input tokens
+            input_token_count = count_tokens(text)
+
             # Anonymize text
-            anonymized_text, entity_mapping = anonymize_text(text, labels)
+            anonymized_text, entity_mapping = anonymize_text(text, model, labels)
+
+            # Count output tokens
+            output_token_count = count_tokens(anonymized_text)
 
             # Encrypt entity mapping for all public keys
             encrypted_mapping = hybrid_encrypt(json.dumps(entity_mapping, ensure_ascii=False), public_keys_folder)
 
             # Save anonymized text and encrypted mapping
             base_filename = Path(file_path).stem
-            output_file = Path(output_folder) / f"{base_filename}_processed.json"
-            with open(output_file, "w", encoding="utf-8") as file:
+            json_output_file = Path(output_folder) / f"{base_filename}_processed.json"
+            with open(json_output_file, "w", encoding="utf-8") as file:
                 json.dump(
-                    {"anonymized_text": anonymized_text, "encrypted_mapping": encrypted_mapping},
+                    {
+                        "anonymized_text": anonymized_text,
+                        "encrypted_mapping": encrypted_mapping,
+                        "input_token_count": input_token_count,
+                        "output_token_count": output_token_count,
+                        "language": language_code,
+                    },
                     file,
                     indent=4,
                     ensure_ascii=False,
                 )
 
-            print(f"Processed {file_path} saved to {output_file}.")
+            # Save readable anonymized text
+            readable_output_file = Path(readable_folder) / f"{base_filename}_anonymized.txt"
+            with open(readable_output_file, "w", encoding="utf-8") as file:
+                file.write(f"Anonymized Text:\n{anonymized_text}\n\nEntity Mapping:\n")
+                for placeholder, original in entity_mapping:
+                    file.write(f"{placeholder} -> {original}\n")
+                file.write(f"\nInput Tokens: {input_token_count}\n")
+                file.write(f"Output Tokens: {output_token_count}\n")
+                file.write(f"Language: {language_code.upper()}\n")
+
+            print(f"Processed {file_path} saved to {json_output_file} and {readable_output_file}.")
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
 
@@ -190,11 +247,15 @@ if __name__ == "__main__":
     # Static folders
     input_folder = "input"
     output_folder = "output"
+    readable_folder = "output/readable"
     public_keys_folder = "public_keys"
     entity_file = "gliner_entities.txt"
 
     if args.keygen:
         generate_keys()
 
+    # Load GLiNER models for supported languages
+    gliner_models = load_gliner_models()
+
     # Process files
-    process_files(input_folder, output_folder, public_keys_folder, entity_file)
+    process_files(input_folder, output_folder, public_keys_folder, entity_file, gliner_models)

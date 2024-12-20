@@ -3,6 +3,7 @@ import os
 import base64
 import argparse
 from pathlib import Path
+from tqdm import tqdm  # Barra di caricamento
 from PyPDF2 import PdfReader
 import spacy
 from langdetect import detect
@@ -151,15 +152,14 @@ def process_files(input_folder, output_folder, public_keys_folder, spacy_models)
     """
     os.makedirs(output_folder, exist_ok=True)
 
-    for file_path in Path(input_folder).rglob("*"):
+    files = list(Path(input_folder).rglob("*"))
+    for file_path in tqdm(files, desc="Processing files"):
         try:
             if file_path.suffix.lower() == ".pdf":
                 # Extract text from PDF
-                print(f"Processing PDF file {file_path}...")
                 text = extract_text_from_pdf(file_path)
             elif file_path.suffix.lower() == ".txt":
                 # Read text from TXT file
-                print(f"Processing TXT file {file_path}...")
                 with open(file_path, "r", encoding="utf-8") as file:
                     text = file.read()
             else:
@@ -176,8 +176,6 @@ def process_files(input_folder, output_folder, public_keys_folder, spacy_models)
                 print(f"Unsupported language for file {file_path}. Skipping...")
                 continue
 
-            print(f"Detected language: {language_code}")
-
             # Anonymize text
             nlp = spacy_models[language_code]
             anonymized_text, entity_mapping = anonymize_text(text, nlp)
@@ -187,8 +185,8 @@ def process_files(input_folder, output_folder, public_keys_folder, spacy_models)
 
             # Save anonymized text and encrypted mapping
             base_filename = Path(file_path).stem
-            output_file = Path(output_folder) / f"{base_filename}_processed.json"
-            with open(output_file, "w", encoding="utf-8") as file:
+            json_output_file = Path(output_folder) / f"{base_filename}_processed.json"
+            with open(json_output_file, "w", encoding="utf-8") as file:
                 json.dump(
                     {"anonymized_text": anonymized_text, "encrypted_mapping": encrypted_mapping},
                     file,
@@ -196,7 +194,14 @@ def process_files(input_folder, output_folder, public_keys_folder, spacy_models)
                     ensure_ascii=False,
                 )
 
-            print(f"Processed {file_path} saved to {output_file}.")
+            # Save readable anonymized text
+            readable_output_file = Path(output_folder) / f"{base_filename}_anonymized.txt"
+            with open(readable_output_file, "w", encoding="utf-8") as file:
+                file.write(f"Anonymized Text:\n{anonymized_text}\n\nEntity Mapping:\n")
+                for placeholder, original in entity_mapping:
+                    file.write(f"{placeholder} -> {original}\n")
+
+            print(f"Processed {file_path} saved to {json_output_file} and {readable_output_file}.")
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
 
